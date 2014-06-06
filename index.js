@@ -1,13 +1,5 @@
 /* jshint node: true */
 
-/**
- * Simulation API test.
- *
- * What it should look and feel like.
- * Let's start with the two lights example.
- *
- */
-
 (function (root) {
   'use strict';
 
