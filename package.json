@@ -1,0 +1,23 @@
+{
+  "name": "pretend.js",
+  "version": "0.0.0",
+  "description": "Discrete event simulation.",
+  "main": "index.js",
+  "dependencies": {
+    "lodash": "^2.4.1"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mtth/pretend.js.git"
+  },
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mtth/pretend.js/issues"
+  },
+  "homepage": "https://github.com/mtth/pretend.js"
+}
