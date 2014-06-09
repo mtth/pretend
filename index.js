@@ -5,71 +5,160 @@
 
   var util = require('util'),
       events = require('events'),
-      _ = require('lodash');
+      assert = require('assert'),
+      stream = require('stream');
 
-  var cache = {},
-      queue = [];
+  /**
+   * A trigger is an event that also exposes the resources that trigger it.
+   *
+   * Events is an object with keys a comma separated list of resource IDs and
+   * value an associated callback with a check.
+   *
+   */
+  function Delay(opts) {
+    events.EventEmitter.call(this);
+    this.repeat = opts.repeat || false;
 
-  // tick is a function that can be passed to determine when the resource
-  // gets replenished. it will be called with itself as context. to increment
-  // by more/less than one, the function can return an object {'interval',
-  // 'amount'}
-  function Resource(id, tick) {
+    switch (opts.type) {
+      case 'exp':
+        this.getOffset = (function (rate) {
+          return function () { return - Math.log(Math.random()) / rate; };
+        })(opts.rate || 1);
+        break;
+      case 'uni':
+        this.getOffset = (function (low, high) {
+          low = low || 0;
+          high = high || 1;
+          var range = high - low;
+          return function () { return low + range * Math.random(); };
+        })(opts.bounds[0], opts.bounds[1]);
+        break;
+      default:
+        this.getOffset = function () { return opts.value; };
+    }
+
+  }
+  util.inherits(Delay, events.EventEmitter);
+
+  Delay.prototype.next = function () {
+    this.emit('event', this.getOffset());
+  };
+
+  /**
+   * A timeline is a readable stream.
+   *
+   * TODO: add a seed as argument to the timeline, that allows reproducing the
+   * random delays generated.
+   *
+   */
+  function Timeline() {
+    stream.Readable.call(this, {objectMode: true});
+
+    var step = 0,
+        time = 0,
+        queue = [],
+        state = {};
+
+    this.getTime = function () { return time; };
+
+    this._add = function (eventTime, cb) {
+      assert.ok(eventTime >= time, "Cannot rewind history.");
+      var i = 0, l = queue.length;
+      while (i < l && queue[i].time <= eventTime) { i++; }
+      queue.splice(i, 0, {time: eventTime, cb: cb});
+    };
+
+    this._read = function () {
+      if (!queue.length) {
+        this.push(null);
+      } else {
+        var evt = queue.shift();
+        step++;
+        time = evt.time;
+        evt.cb(step, time);
+        this.push({state: state, step: step, time: time});
+      }
+    };
+
+  }
+  util.inherits(Timeline, stream.Readable);
+
+  Timeline.prototype.after = function (delay, cb) {
+    var eventTime = this.getTime(),
+        _cb = delay.repeat ? function (s, t) { delay.next(); cb(s, t); } : cb;
+    delay.on('event', (function (timeline) {
+      return function (offset) {
+        eventTime += offset;
+        timeline._add(eventTime, _cb);
+      };
+    })(this));
+    delay.next();
+  };
+
+  Timeline.prototype.when = function (triggers, cb) {
+    var filters = [],
+        i, l, filter, trigger;
+
+    for (i = 0, l = triggers.length; i < l; i++) {
+      if (filter = triggers[i].filter) {
+        filters.push(filter);
+      }
+    }
+
+    var onEvent = (function (timeline) {
+      return function onEvent(state, oldState) {
+        for (var i = 0, l = filters.length; i < l; i++) {
+          if (!filters[i](state, oldState)) { return; }
+        }
+        cb(timeline.step, timeline.time);
+      };
+    })(this);
+
+    for (i = 0, l = triggers.length; i < l; i++) {
+      trigger = triggers[i];
+      trigger.resource.on('event', onEvent);
+    }
+
+  };
+
+  /**
+   * A resource is a self contained state machine.
+   *
+   * Each time its state is updated, an event is emitted.
+   *
+   * resource:ID
+   *
+   */
+  function Resource(id, state) {
     events.EventEmitter.call(this);
 
-    var self = cache[id] = this;
-    self._amount = 0;
+    // Check that ID conforms to format
+    assert.ok(typeof id == 'string', 'Resource ID must be a string.');
+    this.id = id;
 
-    if (tick) {
-      onTick();
-    }
-
-    function onTick() {
-      var interval = tick.call(self);
-      self.emit('tick');
-      self._amount += 1;
-      setTimeout(onTick, interval);
-    }
+    // Keep state private inside the closure, to ensure consistency
+    this.getState = function () { return state; };
+    this.setState = function (newState) {
+      var oldState = state;
+      state = newState;
+      this.emit('event', state, oldState);
+    };
 
   }
   util.inherits(Resource, events.EventEmitter);
 
-  Resource.prototype.consume = function (amount, silent) {
-    amount = typeof amount != 'undefined' ? Math.min(amount, this._amount)
-                                          : this._amount;
-    this._amount -= amount;
-    if (!silent) {
-      this.emit('tick');
+  Resource.prototype.hasState = function (filter) {
+    if (typeof filter != 'function') {
+      return this.hasState(function (state) { return state === filter; });
+    } else {
+      return {resource: this, filter: filter};
     }
-    return amount;
-  };
-
-  // resources can either be a list of ids or a list of objects {'id',
-  // 'amount'}
-  // callback will be passed each resource as argument. the amounts will
-  // already have been removed
-  Resource.available = function (resources, callback) {
-
-    var _resources = _.map(resources, function (s) { return cache[s]; });
-
-    function onAvailable() {
-      _.each(_resources, function (o) { o._amount -= 1; });
-      callback.apply(null, _resources);
-    }
-
-    function onTick() {
-      var isAvailable = _.all(_resources, function (o) { return o._amount > 0; });
-      if (isAvailable) {
-        onAvailable();
-      }
-    }
-
-    _.each(_resources, function (o) { o.on('tick', onTick); });
-
   };
 
   root.exports = {
-    Resource: Resource
+    Timeline: Timeline,
+    Resource: Resource,
+    Delay: Delay
   };
 
 })(module);

@@ -1,65 +1,84 @@
 /* jshint node: true */
 
-/**
- * Simulation API test.
- *
- * What it should look and feel like.
- * Let's start with the two lights example.
- *
- */
-
 (function () {
   'use strict';
 
-  var pretend = require('./index');
+  var pretend = require('./index.js'),
+      assert = require('assert');
 
-  function intersections() {
+  (function testEmptyTimeline() {
+    var emptyTimeline = new pretend.Timeline();
+    assert.equal(emptyTimeline.read(), null);
+  })();
 
+  (function testSingleDelayTimeline() {
     var timeline = new pretend.Timeline(),
-        cars1 = new pretend.Resource('cars1', {state: 10}),
-        cars2 = new pretend.Resource('cars2', {state: 0}),
-        light1 = new pretend.Resource('light1', {state: 'off'}),
-        light2 = new pretend.Resource('light1', {state: 'on'}),
-        timer1 = new pretend.timer.Exponential(0.1),
-        timer2 = new pretend.timer.Exponential(0.1),
-        timer3 = new pretend.timer.Exponential(0.01);
+        delay = new pretend.Delay({value: 2}),
+        step = 0,
+        time = 0;
+    timeline.after(delay, function (s, t) { step = s; time = t; });
+    assert.deepEqual(timeline.read(), {state: {}, step: 1, time: 2});
+    assert.equal(timeline.read(), null);
+    assert.equal(step, 1);
+    assert.equal(time, 2);
+  })();
 
-    timeline.when([timer1], function () { cars1.setState(cars1.getState() + 1); });
-    timeline.when([timer2], function () { switchState(light1); });
-    timeline.when([timer3], function () { switchState(light2); });
+  (function testMultipleDelayTimeline() {
+    var timeline = new pretend.Timeline(),
+        delay = new pretend.Delay({value: 3, repeat: true}),
+        step = 0,
+        time = 0;
+    timeline.after(delay, function (s, t) { step = s; time = t; });
+    assert.deepEqual(timeline.read(), {state: {}, step: 1, time: 3});
+    assert.deepEqual(timeline.read(), {state: {}, step: 2, time: 6});
+    assert.equal(step, 2);
+    assert.equal(time, 6);
+  })();
 
-    timeline.when([light1.hasState('on')], function () {
-      var waitingCars = cars1.getState();
-      cars1.setState(0);
-      cars2.setState(waitingCars);
-    });
+  (function testResourceTrigger() {
+    var t = new pretend.Timeline(),
+        d = new pretend.Delay({value: 3, repeat: true}),
+        r = new pretend.Resource('resource', 0);
+    t.after(d, function () { r.setState(r.getState() + 1); });
+    t.when([r.hasState(2)], function () { r.setState(0); });
+    assert.equal(r.getState(), 0);
+    t.read();
+    assert.equal(r.getState(), 1);
+    t.read();
+    assert.equal(r.getState(), 0);
+  })();
 
-    timeline.when([light2.hasState('on')], function () {
-      cars2.setState(0);
-    });
+  (function testResourceTriggerComplex() {
+    var t = new pretend.Timeline(),
+        c = new pretend.Resource('cars', {state: 10}),
+        l = new pretend.Resource('light', {state: 'off'}),
+        cd = new pretend.Delay({type: 'exp', rate: 5, repeat: true}),
+        ld = new pretend.Delay({type: 'uni', bounds: [0, 10], repeat: true}),
+        step = 0;
 
-    function switchState(light) {
-      if (light.getState() == 'on') {
-        light.setState('off');
+    t.after(cd, function () { c.setState(c.getState() + 1); });
+
+    t.after(ld, function () {
+      if (l.getState() == 'on') {
+        l.setState('off');
       } else {
-        light.setState('on');
+        l.setState('on');
       }
+    });
+
+    t.when(
+      [l.hasState('on'), c.hasState(function (state) { return state > 0; })],
+      function (step) {
+        console.log(c.getState() + ' cars going at step ' + step);
+        c.setState(0);
+      }
+    );
+
+    while (step < 1000) {
+      step++;
+      t.read();
     }
 
-    return timeline;
-
-  }
-
-  function carwash() {
-
-    var timeline = new pretend.Timeline(),
-        cars = new pretend.Resource('cars', {state: 0}),
-        washer = new pretend.Resource('washer', {state: 5});
-
-    // TODO
-
-    return timeline;
-
-  }
+  })();
 
 })();
