@@ -9,63 +9,40 @@
       stream = require('stream');
 
   /**
-   * A trigger is an event that also exposes the resources that trigger it.
-   *
-   * Events is an object with keys a comma separated list of resource IDs and
-   * value an associated callback with a check.
-   *
-   */
-  function Delay(opts) {
-    events.EventEmitter.call(this);
-    this.repeat = opts.repeat || false;
-
-    switch (opts.type) {
-      case 'exp':
-        this.getOffset = (function (rate) {
-          return function () { return - Math.log(Math.random()) / rate; };
-        })(opts.rate || 1);
-        break;
-      case 'uni':
-        this.getOffset = (function (low, high) {
-          low = low || 0;
-          high = high || 1;
-          var range = high - low;
-          return function () { return low + range * Math.random(); };
-        })(opts.bounds[0], opts.bounds[1]);
-        break;
-      default:
-        this.getOffset = function () { return opts.value; };
-    }
-
-  }
-  util.inherits(Delay, events.EventEmitter);
-
-  Delay.prototype.next = function () {
-    this.emit('event', this.getOffset());
-  };
-
-  /**
    * A timeline is a readable stream.
-   *
-   * TODO: add a seed as argument to the timeline, that allows reproducing the
-   * random delays generated.
    *
    */
   function Timeline() {
     stream.Readable.call(this, {objectMode: true});
 
-    var step = 0,
-        time = 0,
+    var time = 0,
         queue = [],
-        state = {};
+        resources = {};
 
+    this.getResource = function (id) { return resources[id]; };
     this.getTime = function () { return time; };
+    this.getState = function () {
+      var states = {}, id;
+      for (id in resources) {
+        if (resources.hasOwnProperty(id)) {
+          states[id] = resources[id].getState();
+        }
+      }
+      return states;
+    };
 
-    this._add = function (eventTime, cb) {
-      assert.ok(eventTime >= time, "Cannot rewind history.");
-      var i = 0, l = queue.length;
-      while (i < l && queue[i].time <= eventTime) { i++; }
-      queue.splice(i, 0, {time: eventTime, cb: cb});
+    this.addResource = function (id, options) {
+      return resources[id] = new Resource(options)
+        .on('moment', function onEvent(delay, callback) {
+          if (delay !== null) {
+            assert.ok(delay >= 0, "Cannot rewind history.");
+            var eventTime = time + delay,
+                i = 0,
+                l = queue.length;
+            while (i < l && queue[i].time <= eventTime) { i++; }
+            queue.splice(i, 0, {time: eventTime, callback: callback});
+          }
+        });
     };
 
     this._read = function () {
@@ -73,50 +50,44 @@
         this.push(null);
       } else {
         var evt = queue.shift();
-        step++;
         time = evt.time;
-        evt.cb(step, time);
-        this.push({state: state, step: step, time: time});
+        evt.callback(time);
+        this.push(time);
       }
     };
 
   }
   util.inherits(Timeline, stream.Readable);
 
-  Timeline.prototype.after = function (delay, cb) {
-    var eventTime = this.getTime(),
-        _cb = delay.repeat ? function (s, t) { delay.next(); cb(s, t); } : cb;
-    delay.on('event', (function (timeline) {
-      return function (offset) {
-        eventTime += offset;
-        timeline._add(eventTime, _cb);
-      };
-    })(this));
-    delay.next();
-  };
+  Timeline.prototype.onChange = function (resources, filter, callback) {
 
-  Timeline.prototype.when = function (triggers, cb) {
-    var filters = [],
-        i, l, filter, trigger;
-
-    for (i = 0, l = triggers.length; i < l; i++) {
-      if (filter = triggers[i].filter) {
-        filters.push(filter);
-      }
+    if (typeof callback == 'undefined') {
+      callback = filter;
+      filter = undefined;
     }
 
-    var onEvent = (function (timeline) {
-      return function onEvent(state, oldState) {
-        for (var i = 0, l = filters.length; i < l; i++) {
-          if (!filters[i](state, oldState)) { return; }
+    var onChange = (function (timeline) {
+
+      // cache resources for performance
+      var _resources = [];
+      for (var i = 0, l = resources.length; i < l; i++) {
+        _resources.push(timeline.getResource(resources[i]));
+      }
+
+      return function () {
+        var states = [];
+        for (var i = 0, l = _resources.length; i < l; i++) {
+          states.push(_resources[i].getState());
         }
-        cb(timeline.step, timeline.time);
+        if (!filter || filter.apply(timeline, states)) {
+          callback.apply(timeline, states);
+        }
       };
+
     })(this);
 
-    for (i = 0, l = triggers.length; i < l; i++) {
-      trigger = triggers[i];
-      trigger.resource.on('event', onEvent);
+    for (var i = 0, l = resources.length; i < l; i++) {
+      this.getResource(resources[i]).on('change', onChange);
     }
 
   };
@@ -126,39 +97,52 @@
    *
    * Each time its state is updated, an event is emitted.
    *
-   * resource:ID
+   * Note that the state is kept inside the closure. We're among adults, but
+   * just to make sure.
    *
    */
-  function Resource(id, state) {
+  function Resource(options) {
     events.EventEmitter.call(this);
 
-    // Check that ID conforms to format
-    assert.ok(typeof id == 'string', 'Resource ID must be a string.');
-    this.id = id;
+    var _state = options.state;
 
-    // Keep state private inside the closure, to ensure consistency
-    this.getState = function () { return state; };
-    this.setState = function (newState) {
-      var oldState = state;
-      state = newState;
-      this.emit('event', state, oldState);
+    this.getState = function () { return _state; };
+
+    this.setState = function (state, delay) {
+
+      delay = delay || 0;
+
+      var emit = this.emit.bind(this);
+
+      if (typeof delay == 'number') {
+        emit('moment', delay, uniqueEventCallback);
+      } else { // delay should be a stream
+        emit('moment', delay.read(), streamEventCallback);
+      }
+
+      function uniqueEventCallback() {
+        var newState = typeof state == 'function' ? state(_state) : state;
+        if (newState !== _state) {
+          var oldState = _state;
+          _state = newState;
+          emit('change', newState, oldState);
+        }
+      }
+
+      function streamEventCallback() {
+        uniqueEventCallback();
+        emit('moment', delay.read(), streamEventCallback);
+      }
+
     };
 
   }
   util.inherits(Resource, events.EventEmitter);
 
-  Resource.prototype.hasState = function (filter) {
-    if (typeof filter != 'function') {
-      return this.hasState(function (state) { return state === filter; });
-    } else {
-      return {resource: this, filter: filter};
-    }
-  };
-
   root.exports = {
     Timeline: Timeline,
     Resource: Resource,
-    Delay: Delay
+    stream: require('./stream')
   };
 
 })(module);

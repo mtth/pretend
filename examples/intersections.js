@@ -11,53 +11,54 @@
 (function (root) {
   'use strict';
 
-  var pretend = require('pretend');
+  var pretend = require('../index');
 
   function intersections() {
 
-    // Resources
-    var timeline = new pretend.Timeline(),
-        cars1 = new pretend.Resource('cars1', {state: 10}),
-        cars2 = new pretend.Resource('cars2', {state: 0}),
-        light1 = new pretend.Resource('light1', {state: 'off'}),
-        light2 = new pretend.Resource('light1', {state: 'on'});
+    var timeline = new pretend.Timeline();
 
-    // Dependencies
+    timeline
+      .addResource('cars1', {state: 10})
+      .setState(
+        function (state) { return state + 1; },
+        new pretend.stream.Poisson({rate: 10})
+      );
 
-    // Initial car arrivals
-    timeline.when([new timeline.Delay({type: 'exp', rate: 5})], function () {
-      cars1.setState(cars1.getState() + 1);
-    });
+    timeline
+      .addResource('cars2', {state: 0});
 
-    // First light color switching
-    timeline.when([new timeline.Delay({type: 'exp', rate: 0.5})], function () {
-      switchState(light1);
-    });
+    timeline
+      .addResource('light1', {state: 'off'})
+      .setState(
+        switchState,
+        new pretend.stream.Fixed({delay: 1})
+      );
 
-    // Second light color switching
-    timeline.when([new timeline.Delay({type: 'exp', rate: 0.1})], function () {
-      switchState(light2);
-    });
+    timeline
+      .addResource('light2', {state: 'on'})
+      .setState(
+        switchState,
+        new pretend.stream.Uniform({maxDelay: 20})
+      );
 
     // Let cars through on green at first light
-    timeline.when([light1.hasState('on')], function () {
-      var waitingCars = cars1.getState();
-      cars1.setState(0);
-      cars2.setState(waitingCars);
-    });
+    timeline.onChange(
+      ['light1', 'cars1'],
+      function (states) { return states[0] === 'on' && states[1] > 0; },
+      function (states) {
+        this.getResource('cars1').setState(0);
+        this.getResource('cars2').setState(states[1]);
+      }
+    );
 
     // Let cars through on green at second light
-    timeline.when([light2.hasState('on')], function () {
-      cars2.setState(0);
-    });
+    timeline.onChange(
+      ['light2', 'cars2'],
+      function (states) { return states[0] === 'on' && states[1] > 0; },
+      function () { this.getResource('cars2').setState(0); }
+    );
 
-    function switchState(light) {
-      if (light.getState() == 'on') {
-        light.setState('off');
-      } else {
-        light.setState('on');
-      }
-    }
+    function switchState(state) { return state === 'on' ? 'off' : 'on'; }
 
     return timeline;
 
