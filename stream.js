@@ -30,12 +30,11 @@
   }
   util.inherits(Process, stream.Readable);
 
-  Process.create = function (init, getDelay, validate) {
+  Process.create = function (init, getDelay) {
     function SubProcess(options) { Process.call(this, options); }
     util.inherits(SubProcess, Process);
     SubProcess.prototype.init = init;
     SubProcess.prototype.getDelay = getDelay;
-    SubProcess.prototype.validate = validate;
     return SubProcess;
   };
 

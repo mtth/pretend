@@ -21,7 +21,7 @@
       .addResource('cars1', {state: 10})
       .setState(
         function (state) { return state + 1; },
-        new pretend.stream.Poisson({rate: 10})
+        new pretend.stream.Poisson({rate: 5})
       );
 
     timeline
@@ -38,7 +38,7 @@
       .addResource('light2', {state: 'on'})
       .setState(
         switchState,
-        new pretend.stream.Uniform({maxDelay: 20})
+        new pretend.stream.Uniform({minDelay: 1, maxDelay: 2})
       );
 
     // Let cars through on green at first light
@@ -47,7 +47,9 @@
       function (states) { return states[0] === 'on' && states[1] > 0; },
       function (states) {
         this.getResource('cars1').setState(0);
-        this.getResource('cars2').setState(states[1]);
+        this.getResource('cars2').setState(function (state) {
+          return state + states[1];
+        });
       }
     );
 

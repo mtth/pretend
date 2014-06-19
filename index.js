@@ -5,15 +5,13 @@
 
   var util = require('util'),
       events = require('events'),
-      assert = require('assert'),
-      stream = require('stream');
+      assert = require('assert');
 
   /**
    * A timeline is a readable stream.
    *
    */
   function Timeline() {
-    stream.Readable.call(this, {objectMode: true});
 
     var time = 0,
         queue = [],
@@ -21,6 +19,7 @@
 
     this.getResource = function (id) { return resources[id]; };
     this.getTime = function () { return time; };
+
     this.getState = function () {
       var states = {}, id;
       for (id in resources) {
@@ -45,19 +44,18 @@
         });
     };
 
-    this._read = function () {
+    this.next = function () {
       if (!queue.length) {
-        this.push(null);
+        return null;
       } else {
         var evt = queue.shift();
         time = evt.time;
         evt.callback(time);
-        this.push(time);
+        return time;
       }
     };
 
   }
-  util.inherits(Timeline, stream.Readable);
 
   Timeline.prototype.onChange = function (resources, filter, callback) {
 
@@ -79,8 +77,8 @@
         for (var i = 0, l = _resources.length; i < l; i++) {
           states.push(_resources[i].getState());
         }
-        if (!filter || filter.apply(timeline, states)) {
-          callback.apply(timeline, states);
+        if (!filter || filter.call(timeline, states)) {
+          callback.call(timeline, states);
         }
       };
 
@@ -119,6 +117,8 @@
       } else { // delay should be a stream
         emit('moment', delay.read(), streamEventCallback);
       }
+
+      return this;
 
       function uniqueEventCallback() {
         var newState = typeof state == 'function' ? state(_state) : state;

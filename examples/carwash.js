@@ -8,42 +8,32 @@
 (function (root) {
   'use strict';
 
-  var pretend = require('pretend'),
-      util = require('util');
+  var pretend = require('../index');
 
-  // Helper to handle scalar resources
-  function ScalarResource(id, value) {
-    value = value || 0;
-    pretend.Resource.call(this, id, {state: value});
-  }
-  util.inherits(ScalarResource, pretend.Resource);
-
-  ScalarResource.prototype.isAvailable = function () {
-    return this.hasState(function (state) { return state > 0; });
-  };
-
-  ScalarResource.prototype.offsetState = function (value) {
-    return (function () {
-      this.setState(this.getState() + value);
-    }).bind(this);
-  };
-
-  // Main event loop
   function carwash() {
 
-    var timeline = new pretend.Timeline(),
-        cars = new ScalarResource('cars'),
-        washers = new ScalarResource('washers', 5),
-        arrival = new pretend.Delay({type: 'exp', rate: 1, repeat: true});
+    var timeline = new pretend.Timeline();
 
-    timeline.after(arrival, cars.offsetState(1));
+    // cars
+    timeline.addResource('cars', {state: 0})
+      .setState(
+        function (state) { return state + 1; },
+        new pretend.stream.Poisson({rate: 5})
+      );
 
-    timeline.when([cars.isAvailable, washers.isAvailable], function () {
-      cars.offsetState(-1)();
-      washers.offsetState(-1)();
-      var delay = new timeline.Delay({type: 'uni', bounds: [1, 10]});
-      timeline.when([delay], washers.offsetState(1));
-    });
+    // washers
+    timeline.addResource('washers', {state: 5});
+
+    timeline.onChange(
+      ['cars', 'washers'],
+      function (states) { return states[0] > 0 && states[1] > 0; },
+      function () {
+        this.getResource('cars').setState(function (s) { return s - 1; });
+        this.getResource('washers')
+          .setState(function (s) { return s - 1; })
+          .setState(function (s) { return s + 1; }, 2);
+      }
+    );
 
     return timeline;
 
