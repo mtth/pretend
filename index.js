@@ -8,31 +8,24 @@
       assert = require('assert');
 
   /**
-   * A timeline is a readable stream.
+   * A timeline is not a readable stream.
    *
    */
   function Timeline() {
+    events.EventEmitter.call(this);
 
     var time = 0,
         queue = [],
         resources = {};
 
     this.getResource = function (id) { return resources[id]; };
+
     this.getTime = function () { return time; };
 
-    this.getState = function () {
-      var states = {}, id;
-      for (id in resources) {
-        if (resources.hasOwnProperty(id)) {
-          states[id] = resources[id].getState();
-        }
-      }
-      return states;
-    };
-
     this.addResource = function (id, options) {
-      return resources[id] = new Resource(options)
-        .on('moment', function onEvent(delay, callback) {
+
+      var resource = resources[id] = new Resource(options)
+        .on('delay', function (delay, callback) {
           if (delay !== null) {
             assert.ok(delay >= 0, "Cannot rewind history.");
             var eventTime = time + delay,
@@ -42,6 +35,8 @@
             queue.splice(i, 0, {time: eventTime, callback: callback});
           }
         });
+
+      return resource;
     };
 
     this.next = function () {
@@ -50,12 +45,26 @@
       } else {
         var evt = queue.shift();
         time = evt.time;
-        evt.callback(time);
-        return time;
+        evt.callback();
+        this.emit('epoch', time, getState());
+        return this;
       }
     };
 
+    function getState() {
+
+      var states = {}, id;
+      for (id in resources) {
+        if (resources.hasOwnProperty(id)) {
+          states[id] = resources[id].getState();
+        }
+      }
+
+      return states;
+    }
+
   }
+  util.inherits(Timeline, events.EventEmitter);
 
   Timeline.prototype.onChange = function (resources, filter, callback) {
 
@@ -108,19 +117,25 @@
 
     this.setState = function (state, delay) {
 
-      delay = delay || 0;
-
       var emit = this.emit.bind(this);
 
-      if (typeof delay == 'number') {
-        emit('moment', delay, uniqueEventCallback);
-      } else { // delay should be a stream
-        emit('moment', delay.read(), streamEventCallback);
+      if (typeof delay == 'undefined') {
+
+        changeState(); // synchronous
+
+      } else {
+
+        if (typeof delay == 'number') {
+          emit('delay', delay, changeState);
+        } else { // delay should be a stream
+          emit('delay', delay.read(), delayCallback);
+        }
+
       }
 
       return this;
 
-      function uniqueEventCallback() {
+      function changeState() {
         var newState = typeof state == 'function' ? state(_state) : state;
         if (newState !== _state) {
           var oldState = _state;
@@ -129,9 +144,9 @@
         }
       }
 
-      function streamEventCallback() {
-        uniqueEventCallback();
-        emit('moment', delay.read(), streamEventCallback);
+      function delayCallback() {
+        changeState();
+        emit('delay', delay.read(), delayCallback);
       }
 
     };

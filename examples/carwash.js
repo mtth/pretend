@@ -35,6 +35,11 @@
       }
     );
 
+    timeline.on('epoch', function (time, states) {
+      console.log('time: ' + time);
+      console.dir(states);
+    });
+
     return timeline;
 
   }

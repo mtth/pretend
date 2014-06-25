@@ -11,4 +11,12 @@
     assert.equal(emptyTimeline.read(), null);
   })();
 
+  (function testSingleResourceTimeline() {
+    var timeline = new pretend.Timeline();
+    timeline.addResource('res', {state: 0})
+      .setState
+
+    assert.equal(emptyTimeline.read(), null);
+  })();
+
 })();
